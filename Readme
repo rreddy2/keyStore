@@ -1,0 +1,30 @@
+Brian Burke
+Rohith Reddy 
+
+Distributed Systems Programming Assignment 4
+
+
+We implemented the key-value store with configurable consistency with Python
+
+How to compile and run on remote.cs computers:
+	1.	create a text file with all of the information (<replica-name> <ip-address> <port-number>)
+	2.	open up 4 remote.cs terminals and run ./replica.py <replica-name> <port-number> <replicas.txt> on
+		each of them
+	3.	start a client on a 5th terminal with ./client <ip-address> <port-number> with the coordinator's IP 
+		address and port number.
+	4.	open up the console and write "get" and "put" methods
+
+Brian worked on:
+	Planning out the whole project from start to finish
+	Did Hinted Handoff and Read Repair
+	Client => Coordinator message implementation
+	Threading and Coordination between Replicas
+Rohith worked on:
+	Planning out the whole project from start to finish
+	Worked on write-ahead log implementation and replica restart
+	Client.py
+	Get and Put Functions in ReplicaServer.py
+	Protobuff File
+Completion Status:
+	We have completed the whole assignment. All implementations including replicas, clients, read repair, hinted handoff,
+	replication factor, write-ahead log, and configurable consistency.

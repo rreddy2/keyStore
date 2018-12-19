@@ -1,0 +1,201 @@
+Some notes on PA 4 (Taken straight from assignment description):
+
+Key-Value Store:
+
+- Each replica server is a key-value store that stores the key-value pairs
+  in memory.
+- Keys are unsigned ints from 0 to 255
+- Values are strings
+- Two key-value operations that each replica server must support:
+	1) get key 
+		- Gets the value for the given key
+	2) put key value
+		- If key doesn't already exist, then create a new key-value pair.
+		- If key already exists, then update the key's value
+
+Configurable Consistency:
+
+- We'll have 4 replica servers, each of which is pre-configured with info about
+  the other replicas. 
+- ./replica <replica-name> <port-number> <replicas.txt>
+- replicas.txt
+	<IP-address>,<Port-Number>,<Unique-Name> (for all 4 replicas)
+	Last line will specify whether to implement "Read Repair" or "Hinted Handoff"
+- Keys will be distributed as follows:
+	0-63 will be stored on Replicas "0", "1", "2"
+	64-127 will be stored on Replicas "1", "2", "3"
+	128-191 will be stored on Replicas "2","3","4"
+	192-255 will be stored on Replicas "3", "4", "1"
+- Every replica needs to have some data structure containing hints for other replicas
+- Every replica also needs a dict object to hold the key-value 
+- Each replica will also have a write-ahead log (file) that they populate with write
+  requests BEFORE they update their in-memory data structures
+	if replicas fail, they can be properly restarted using the write-ahead log.
+	Naming convention: "<replica-name>-writelog.txt"
+- Every client request (i.e., a get or put) is handled by a coordinator
+- Client will specify one replica server (through IP Address and Port Number) as
+  the coordinator. All replicas need to be prepared to be coordinator.
+- Consistency level is configured by the client. When issuing a request, the 
+  client explicitly specifies the desired consistency level: ONE of QUORUM.
+- If only one key is available, you will have to return an exception to the 
+  issueing client
+
+On Replica Startup:
+	Check if Write-Ahead file is present, if it is then update it for writes.
+		if its not then create a new file
+	Listen on the port number for any incoming messages
+	Look through <replicas.txt> and establish TCP connections with each of the other
+		nodes
+
+As a Coordinator:
+	Receive Put(Key, Value), Quorum/ONE from client:
+
+		Record Timestamp
+		Use ByteOrderPartition to determine which 3 replicas
+		If the coordinator is in quorum:
+			check if timestamp is not stale
+			update Write-Ahead Log and add to dict
+			Send Messages to two other replicas
+			if consistencyLevel is QUORUM:
+				wait for one response (one more)
+			else:
+				don't wait
+		Else:
+			send messages to three other replicas
+			if consistencyLevel is QUORUM:
+				wait for two responses
+			else:
+				wait for one response
+		Return success message to client
+
+	Receive Get(Key, Value), Quorum/ONE from client:
+		
+		Use ByteOrderPartition to determine which 3 replicas
+		if the coordinator is in quorum:
+			record the timestamp of the value, that's stored in the replica
+			send out readMessages to two other replicas
+			if QUORUM:
+				wait for one return readMessage (with value and timestamp)
+			else:
+				do nothing
+		else:
+			send out readMessages to three other replicas
+			if QUORUM:
+				wait for two responses
+			else:
+				wait for one response
+		return that value with the latest timestamp to client 
+
+
+As Replica:
+	On Receive get(Key):
+		return value and timestamp for key
+			
+	On Receive put(key, value):
+		if timestamp isn't stale:		
+			update write-ahead log
+			update dict structure
+		else:
+			dont do anything
+		return success message
+
+
+
+
+QUORUM consistency level: 
+
+- The coordinator will send the request to all replicas for that key (may or 
+  may not include the coordinator itself). 
+- If request was a write, then the coordinator will respond successfully to
+  the client once the write has been written to quorum replicas (i.e. to two
+  for our system).
+- If request was a read, then the coordinator will return the most 
+  recent data from the two replicas (two for our system configuration). So, 
+  when handling write requests, the coordinator should record the time at which
+  the request was received and include this as a timestmap when contacting 
+  replica servers for writing.
+- If not enough replicas of a key are available (e.g. consistency level is 
+  QUORUM but only one replica of the key is available), then the coordinator
+  should return an exception to the issuing client. Note that this is 
+  different from the "sloppy quorum" in Dynamo. 
+- With QUORUM, we get strong consistency for both get and put. 
+
+ONE consistency level:
+
+- The coordinator only sends the operation to one of the three servers that the
+  given key is assigned to (only 3 with our system configuration). 
+- With ONE consistency level, we can get inconsistencies (different replicas 
+  may be inconsistent).
+- For example, let's say that a replica server misses one write for a key k due
+  to a failure. When the server recovers, it'll replay its write-ahead log to 
+  restore its memory state. Later, when a read request for key k comes in, it 
+  will return its own version of the value for k, which is inconsistent because
+  of the missed write while the replica server was down.
+
+Read Repair/Hinted Handoff:
+
+- Determined in replicas.txt
+- Constant throughout the whole system of replicas
+- To ensure that all replicas will eventually become consistent, we will 
+  implement the following two procedures and the key-value store will be
+  configured to use either of the two: 
+	1) Read repair:
+		- When handling read requests, the coordinator contacts all replicas.
+		  If it finds inconsistent data, then it will perform "read repair"
+		  in the background. 
+	2) Hinted Handoff:
+		- During a write, the coordinator tries to write to all replicas. As 
+		  long as enough replicas have succeeded (ONE of all in QUORUM), it 
+		  will respond successfully to the client. If not all replicas have 
+		  succeeded, then the coordinator will store a "hint" locally. At a 
+		  later time, if the failed server (the one that didn't respond 
+		  successfully earlier) has recovered, then it might be selected as 
+		  coordinator for another client's request. If so, then all other 
+		  replica servers that have locally stored "hints" for this server 
+		  will send the stored hints (writes) to the new coordinator. 
+
+Client:
+
+- Create a client that issues a stream of get and put requests to the key-value
+  store.
+- Once client has started, it should act as a console, allowing users to issue
+  a stream of requests.
+- Client selects on replica server as the coordinator for all of its requests.
+  So, all requests from a single client are handled by the same coordinator.
+  We should be able to launch multiple clients, possibly each with a 
+  different coordinator. simultaneously. 
+- ./client <coordinator-IP> <coordinator-port>
+
+
+
+PROTO BUFF
+
+Get Request Message (Client -> Coordinator)
+	int key
+	string consistencyLevel (ONE/QUORUM)
+
+Put Request Message (Client -> Coordinator)
+	int key
+	string value
+	string consistencyLevel (ONE/QUORUM)
+
+Coordinator Response Message (Coordinator -> Client)
+	string value
+
+Coordinator Exception Message (Coordinator -> Client and Replica -> Replica)
+	string errorMessage
+
+MessageGet (Replica -> Replica)
+	int key
+	
+MessagePut (Replica -> Replica)
+	int key
+	string value
+	string timestamp
+
+ReturnMessagePut (Replica -> Replica)
+	string message
+
+ReturnMessageGet (Replica -> Replica)
+	string timestamp
+	string value
